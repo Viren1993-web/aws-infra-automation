@@ -1,0 +1,126 @@
+name: Terraform CD (Deploy)
+
+# Trigger on push to main branch OR manual trigger
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'terraform/**'
+      - 'lambda/**'
+      - 'website/**'
+  workflow_dispatch:  # Allows manual trigger from GitHub UI
+
+env:
+  TF_VERSION: '1.6.0'
+  AWS_REGION: 'us-east-1'
+  # Update this with your AWS account ID
+  AWS_ACCOUNT_ID: '587402071946'
+
+jobs:
+  deploy:
+    name: Deploy Infrastructure to AWS
+    runs-on: ubuntu-latest
+    environment: production  # Requires manual approval (optional)
+    # Allow GitHub to request an OIDC token
+    permissions:
+      id-token: write
+      contents: read
+    
+    steps:
+      # Step 1: Checkout code
+      - name: Checkout Code
+        uses: actions/checkout@v4
+      
+      # Step 2: Setup Terraform
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+      
+      # Step 3: Configure AWS credentials using OIDC
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/DeployerAccess-Github
+          aws-region: ${{ env.AWS_REGION }}
+      
+      # Step 4: Verify AWS connection
+      - name: Verify AWS Connection
+        run: |
+          echo "AWS Account ID: $(aws sts get-caller-identity --query Account --output text)"
+          echo "AWS Region: ${{ env.AWS_REGION }}"
+      
+      # Step 5: Terraform Init
+      - name: Terraform Init
+        working-directory: ./terraform
+        run: terraform init
+      
+      # Step 6: Terraform Plan
+      - name: Terraform Plan
+        working-directory: ./terraform
+        run: terraform plan -out=tfplan
+      
+      # Step 7: Terraform Apply
+      - name: Terraform Apply
+        working-directory: ./terraform
+        run: terraform apply -auto-approve tfplan
+      
+      # Step 8: Get outputs
+      - name: Get Terraform Outputs
+        id: tf-outputs
+        working-directory: ./terraform
+        run: |
+          echo "api_url=$(terraform output -raw api_gateway_url)" >> $GITHUB_OUTPUT
+          echo "cloudfront_domain=$(terraform output -raw cloudfront_domain)" >> $GITHUB_OUTPUT
+          echo "s3_bucket=$(terraform output -raw s3_bucket_name)" >> $GITHUB_OUTPUT
+        continue-on-error: true
+      
+      # Step 9: Upload website to S3
+      - name: Upload Website to S3
+        run: |
+          aws s3 sync website/ s3://${{ steps.tf-outputs.outputs.s3_bucket }}/ --delete
+          echo "✅ Website uploaded to S3"
+      
+      # Step 10: Get CloudFront distribution ID
+      - name: Get CloudFront Distribution ID
+        id: cloudfront
+        continue-on-error: true
+        run: |
+          DIST_ID=$(aws cloudfront list-distributions \
+            --query "DistributionList.Items[?Comment=='aws-infra-automation CDN'].Id" \
+            --output text)
+          echo "distribution_id=$DIST_ID" >> $GITHUB_OUTPUT
+      
+      # Step 11: Invalidate CloudFront cache
+      - name: Invalidate CloudFront Cache
+        if: steps.cloudfront.outputs.distribution_id != ''
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id ${{ steps.cloudfront.outputs.distribution_id }} \
+            --paths "/*"
+          echo "✅ CloudFront cache invalidated"
+      
+      # Step 12: Summary
+      - name: Deployment Summary
+        run: |
+          echo "🚀 Deployment Complete!"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "📍 API Gateway: ${{ steps.tf-outputs.outputs.api_url }}"
+          echo "🌍 CloudFront: https://${{ steps.tf-outputs.outputs.cloudfront_domain }}"
+          echo "🪣 S3 Bucket: ${{ steps.tf-outputs.outputs.s3_bucket }}"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      
+      # Step 13: Create GitHub deployment
+      - name: Create Deployment Status
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.repos.createDeployment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: context.sha,
+              environment: 'production',
+              description: 'Deployed AWS infrastructure',
+              auto_merge: false,
+              required_contexts: []
+            })

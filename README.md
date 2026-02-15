@@ -300,7 +300,7 @@ This approach is recommended by:
 
 **To verify OIDC setup:**
 ```bash
-./scripts/setup-oidc.sh
+./scripts/test-oidc.sh
 ```
 
 For detailed setup instructions, see [docs/OIDC_SETUP.md](docs/OIDC_SETUP.md)

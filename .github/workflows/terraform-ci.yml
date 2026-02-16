@@ -140,6 +140,8 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       
       # Scan for secrets in code
       - name: GitLeaks Secret Scan

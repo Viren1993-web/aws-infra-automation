@@ -72,6 +72,8 @@ All resources are carefully selected to stay within AWS Always Free tier limits:
 - ✅ **Global CDN** - CloudFront distribution for low latency
 - ✅ **NoSQL Database** - DynamoDB with auto-scaling
 - ✅ **Email Alerts** - SNS notifications for critical events
+- ✅ **GitHub Actions CI/CD** - Automated testing and deployment pipeline
+- ✅ **Enterprise Security** - OIDC authentication with temporary tokens
 
 ## 📊 Project Impact
 - **Architecture**: Modern serverless stack demonstrating cloud-native design
@@ -257,6 +259,51 @@ Configured Alarms:
 - Lambda throttles (threshold: 10)
 - API Gateway 5XX errors (threshold: 10)
 - DynamoDB capacity utilization (threshold: 80%)
+
+## 🚀 GitHub Actions CI/CD Pipeline
+
+This project includes automated CI/CD workflows with **enterprise-grade OIDC authentication**:
+
+### Security Highlights
+✅ **No AWS credentials stored in GitHub**
+✅ **Temporary OIDC tokens (1 hour validity)**
+✅ **Industry best practice**
+✅ **Enterprise-grade security**
+
+### Workflows
+
+**Continuous Integration (terraform-ci.yml)**
+- Runs on: Pull requests and pushes to main
+- Validates Terraform formatting
+- Checks Python code with linting
+- Scans for security vulnerabilities (GitLeaks, tfsec)
+- Posts Terraform plan as PR comment
+
+**Continuous Deployment (terraform-cd.yml)**
+- Runs on: Merges to main branch (or manual trigger)
+- Automatically applies Terraform changes
+- Uploads website to S3
+- Invalidates CloudFront cache
+- Provides deployment summary
+
+### OIDC Authentication Setup
+
+Instead of storing long-lived AWS credentials:
+1. GitHub generates a temporary token (1 hour validity)
+2. AWS STS exchanges the token for temporary credentials
+3. Credentials are auto-revoked after use
+
+This approach is recommended by:
+- AWS (official documentation)
+- OIDF (OpenID Foundation)
+- Enterprise security teams worldwide
+
+**To verify OIDC setup:**
+```bash
+./scripts/test-oidc.sh
+```
+
+For detailed setup instructions, see [docs/OIDC_SETUP.md](docs/OIDC_SETUP.md)
 
 ## 🧹 Cleanup
 

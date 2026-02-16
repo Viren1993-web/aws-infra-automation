@@ -1,0 +1,19 @@
+# Terraform Variables Configuration
+# Copy this file to terraform.tfvars and customize with your values
+
+# AWS region for resource deployment
+aws_region = "us-east-1"
+
+# Project name - used as prefix for all resources
+project_name = "aws-infra-automation"
+
+# Environment name (dev, staging, prod)
+environment = "prod"
+
+# Email address for CloudWatch alerts and notifications
+# IMPORTANT: You must confirm the SNS subscription via email after deployment
+alert_email = "pviren9@gmail.com"
+
+# CIDR blocks allowed to access resources
+# Default allows all - restrict for production use
+allowed_cidr_blocks = ["0.0.0.0/0"]

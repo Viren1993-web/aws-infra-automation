@@ -26,6 +26,7 @@ jobs:
     permissions:
       id-token: write
       contents: read
+      pull-requests: write
     
     steps:
       # Step 1: Checkout the code

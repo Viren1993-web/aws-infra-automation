@@ -25,6 +25,7 @@ jobs:
     permissions:
       id-token: write
       contents: read
+      deployments: write
     
     steps:
       # Step 1: Checkout code

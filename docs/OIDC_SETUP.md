@@ -1,57 +1,38 @@
 # GitHub Actions OIDC Setup Guide
 
-## 🔐 What is OIDC?
-
-**OIDC (OpenID Connect)** allows GitHub to authenticate with AWS **without storing credentials** as secrets.
-
-### Benefits
-- ✅ No sensitive AWS keys to store
-- ✅ Credentials are temporary (1 hour max)
-- ✅ More secure than long-lived credentials
-- ✅ Better for automated CI/CD
+> OIDC lets GitHub authenticate with AWS using **temporary credentials** — no stored secrets needed.
 
 ---
 
-## 📋 Prerequisites
+## Prerequisites
 
-- ✅ AWS Account with admin access
-- ✅ GitHub repository
-- ✅ GitHub Actions workflows configured
-
----
-
-## 🚀 Setup Steps
-
-### Step 1: Get Your AWS Account ID
-
-```bash
-aws sts get-caller-identity --query Account --output text
-```
-
-Save this number - you'll need it in the workflows (it's already in the `AWS_ACCOUNT_ID` env var).
-
-### Step 2: Create OIDC Provider in AWS
-
-Go to **AWS Console** → **IAM** → **Identity providers** → **Add provider**
-
-Fill in:
-- **Provider type:** OpenID Connect
-- **Provider URL:** `https://token.actions.githubusercontent.com`
-- **Audience:** `sts.amazonaws.com`
-- **GitHub organization:** `Viren1993-web`
-
-Then click **Add provider**
+- AWS account with admin access
+- GitHub repository with Actions enabled
 
 ---
 
-### Step 3: Create IAM Role (Manual Method)
+## Setup Steps
 
-#### Option A: Using AWS Console (Step-by-step)
+### 1. Create OIDC Provider
 
-1. Go to **IAM** → **Roles** → **Create role**
+**AWS Console:** IAM → Identity providers → Add provider
 
-2. Select **Custom trust policy** and paste:
+| Field | Value |
+|-------|-------|
+| Provider type | OpenID Connect |
+| Provider URL | `https://token.actions.githubusercontent.com` |
+| Audience | `sts.amazonaws.com` |
 
+### 2. Create IAM Role
+
+**Option A — Console:**
+
+1. IAM → Roles → Create role → **Custom trust policy**
+2. Paste trust policy below, replacing placeholders
+3. Add inline policy `DeployerAccessPolicy` from [IAM_POLICY_REFERENCE.md](IAM_POLICY_REFERENCE.md)
+4. Name: `DeployerAccess-Github`
+
+**Trust policy:**
 ```json
 {
   "Version": "2012-10-17",
@@ -75,362 +56,93 @@ Then click **Add provider**
 }
 ```
 
-**Replace:**
-- `YOUR_ACCOUNT_ID` with your AWS account ID
-- `YOUR_GITHUB_USERNAME` with your GitHub username
-
-3. Click **Next**
-
-4. **Create inline policy with the necessary permissions:**
-   - Click **Create inline policy**
-   - Use the policy from [docs/IAM_POLICY_REFERENCE.md](IAM_POLICY_REFERENCE.md)
-   - Name it: `DeployerAccessPolicy`
-   - This custom policy includes only necessary permissions (least-privilege approach)
-
-5. Name the role: `DeployerAccess-Github`
-
-6. Click **Create role**
-
----
-
-#### Option B: Using AWS CLI (Faster)
-
+**Option B — CLI:**
 ```bash
-# 1. Set variables
 ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-GITHUB_USERNAME="your-github-username"  # CHANGE THIS
-REPO_NAME="aws-infra-automation"
+GITHUB_USERNAME="your-github-username"
 
-# 2. Create trust policy JSON
+# Create trust policy file
 cat > trust-policy.json <<EOF
 {
   "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Principal": {
-        "Federated": "arn:aws:iam::${ACCOUNT_ID}:oidc-provider/token.actions.githubusercontent.com"
-      },
-      "Action": "sts:AssumeRoleWithWebIdentity",
-      "Condition": {
-        "StringEquals": {
-          "token.actions.githubusercontent.com:aud": "sts.amazonaws.com"
-        },
-        "StringLike": {
-          "token.actions.githubusercontent.com:sub": "repo:${GITHUB_USERNAME}/${REPO_NAME}:*"
-        }
-      }
+  "Statement": [{
+    "Effect": "Allow",
+    "Principal": {
+      "Federated": "arn:aws:iam::${ACCOUNT_ID}:oidc-provider/token.actions.githubusercontent.com"
+    },
+    "Action": "sts:AssumeRoleWithWebIdentity",
+    "Condition": {
+      "StringEquals": { "token.actions.githubusercontent.com:aud": "sts.amazonaws.com" },
+      "StringLike": { "token.actions.githubusercontent.com:sub": "repo:${GITHUB_USERNAME}/aws-infra-automation:*" }
     }
-  ]
+  }]
 }
 EOF
 
-# 3. Create the role
-aws iam create-role \
-  --role-name DeployerAccess-Github \
-  --assume-role-policy-document file://trust-policy.json
-
-# 4. Create custom inline policy (least-privilege approach)
-cat > deployer-policy.json <<'EOF'
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Action": [
-        "s3:*",
-        "lambda:*",
-        "dynamodb:*",
-        "application-autoscaling:*",
-        "apigateway:*",
-        "cloudfront:*",
-        "sns:*",
-        "ec2:*",
-        "logs:*",
-        "cloudwatch:*",
-        "iam:*"
-      ],
-      "Resource": "*"
-    }
-  ]
-}
-EOF
-
-# 5. Attach the inline policy
-aws iam put-role-policy \
-  --role-name DeployerAccess-Github \
-  --policy-name DeployerAccessPolicy \
-  --policy-document file://deployer-policy.json
-
-# 6. Cleanup
-rm trust-policy.json deployer-policy.json
-
-echo "✅ Role created successfully!"
-echo "✅ Custom policy DeployerAccessPolicy attached!"
+# Create role + attach inline policy
+aws iam create-role --role-name DeployerAccess-Github --assume-role-policy-document file://trust-policy.json
+aws iam put-role-policy --role-name DeployerAccess-Github --policy-name DeployerAccessPolicy --policy-document file://deployer-policy.json
+rm trust-policy.json
 ```
 
----
+> For the full `deployer-policy.json` content, see [IAM_POLICY_REFERENCE.md](IAM_POLICY_REFERENCE.md).
 
-### Step 4: Verify the Role ARN
+### 3. Verify
 
 ```bash
 aws iam get-role --role-name DeployerAccess-Github --query 'Role.Arn'
+# Expected: arn:aws:iam::587402071946:role/DeployerAccess-Github
 ```
 
-You should see something like:
-```
-arn:aws:iam::587402071946:role/DeployerAccess-Github
-```
+### 4. Remove Old Secrets from GitHub
 
-This is already configured in your workflows with the `AWS_ACCOUNT_ID` env var.
+Go to repo → Settings → Secrets → Actions and **delete** `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` — they're no longer needed.
 
----
+### 5. Confirm Workflow Config
 
-### Step 5: Remove AWS Secrets from GitHub
-
-⚠️ **IMPORTANT:** Remove these from your GitHub repository secrets:
-
-1. Go to GitHub repo → **Settings** → **Secrets and variables** → **Actions**
-2. Delete:
-   - ❌ `AWS_ACCESS_KEY_ID`
-   - ❌ `AWS_SECRET_ACCESS_KEY`
-
-You no longer need them with OIDC!
-
----
-
-### Step 6: Update Workflows
-
-Your workflows are already updated! The `AWS_ACCOUNT_ID` environment variable is set to your account ID. Make sure it matches:
-
+Workflows use `AWS_ACCOUNT_ID` env var — verify it matches your account:
 ```yaml
 env:
-  AWS_ACCOUNT_ID: '587402071946'  # Update this if different
+  AWS_ACCOUNT_ID: '587402071946'
 ```
 
 ---
 
-## ✅ Testing OIDC
+## Troubleshooting
 
-### Test 1: Use test-oidc script from scripts folder
-
-### Test 2: Check workflow logs
-
-1. Go to GitHub repo → **Actions**
-2. Click the workflow run
-3. Expand **Configure AWS Credentials** step
-4. Look for: `Retrieving assume role credentials` (this means OIDC is working!)
+| Error | Cause | Fix |
+|-------|-------|-----|
+| `NotAuthorized` | Missing permissions | Check `DeployerAccessPolicy` exists: `aws iam list-role-policies --role-name DeployerAccess-Github` |
+| `No suitable credentials` | OIDC provider missing | Verify: `aws iam list-open-id-connect-providers` |
+| `Role ... not found` | Wrong role name or account ID | Verify: `aws iam get-role --role-name DeployerAccess-Github` |
+| Still using old creds | Cached GitHub secrets | Delete `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY` from repo secrets |
 
 ---
 
-## 🔍 Troubleshooting
+## Security Best Practices
 
-### Error: "NotAuthorized" or "Unauthorized"
-
-**Problem:** Role doesn't have required permissions
-
-**Solution:**
-1. Verify role exists: `aws iam get-role --role-name DeployerAccess-Github`
-2. Check inline policies: `aws iam list-role-policies --role-name DeployerAccess-Github`
-3. Verify `DeployerAccessPolicy` is attached with all required permissions
-
-### Error: "No suitable credentials"
-
-**Problem:** OIDC provider not set up correctly
-
-**Solution:**
-1. Verify OIDC provider exists:
-   ```bash
-   aws iam list-open-id-connect-providers
-   ```
-   Should show: `arn:aws:iam::YOUR_ACCOUNT_ID:oidc-provider/token.actions.githubusercontent.com`
-
-2. If missing, create it via AWS Console (IAM → Identity providers)
-
-### Error: "Assume role arn:aws:iam::... not found"
-
-**Problem:** Role name is wrong or `AWS_ACCOUNT_ID` env var is incorrect
-
-**Solution:**
-1. Verify role exists:
-   ```bash
-   aws iam get-role --role-name DeployerAccess-Github
-   ```
-
-2. Update `AWS_ACCOUNT_ID` in workflows if needed:
-   ```bash
-   aws sts get-caller-identity --query Account --output text
-   ```
-
-### Workflow still using old credentials
-
-**Problem:** GitHub cached old secrets
-
-**Solution:**
-1. Go to repo → **Settings** → **Secrets and variables**
-2. Verify `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` are **deleted**
-3. Re-run the workflow
+| Practice | How |
+|----------|-----|
+| Restrict by repo | Already done — trust policy limits to `repo:YOUR_USERNAME/aws-infra-automation:*` |
+| Restrict to main branch | Change trust condition `sub` to `...aws-infra-automation:ref:refs/heads/main` |
+| Require approval | Settings → Environments → production → Required reviewers |
+| Audit regularly | `aws iam get-role-policy --role-name DeployerAccess-Github --policy-name DeployerAccessPolicy` |
 
 ---
 
-## 📊 How OIDC Works (In Simple Terms)
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│ GitHub Actions Workflow Runs                                │
-└────────────────────┬────────────────────────────────────────┘
-                     │
-                     ▼
-        ┌──────────────────────────────┐
-        │ GitHub generates OIDC token  │
-        │ (valid for 1 hour)           │
-        └────────────┬─────────────────┘
-                     │
-                     ▼
-        ┌──────────────────────────────┐
-        │ Send token to AWS STS        │
-        │ (Secure Token Service)       │
-        └────────────┬─────────────────┘
-                     │
-                     ▼
-        ┌──────────────────────────────┐
-        │ AWS verifies token signature │
-        │ & checks repository match    │
-        └────────────┬─────────────────┘
-                     │
-                     ▼
-        ┌──────────────────────────────┐
-        │ AWS issues temporary creds   │
-        │ (~1 hour validity)           │
-        └────────────┬─────────────────┘
-                     │
-                     ▼
-        ┌──────────────────────────────┐
-        │ Workflow uses temp creds     │
-        │ to access AWS resources      │
-        └──────────────────────────────┘
-```
-
-**Key Benefits:**
-- No storing long-lived secrets
-- Token is short-lived (1 hour)
-- Automatic rotation
-- GitHub controls the token
-
----
-
-## 💡 Why Custom Inline Policy?
-
-This project uses **custom inline policy `DeployerAccessPolicy`** instead of AWS managed policies:
-
-### ✅ Custom Inline Policy (Recommended)
-```json
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Action": [
-        "s3:*",
-        "lambda:*",
-        "dynamodb:*",
-        "apigateway:*",
-        "cloudfront:*",
-        "sns:*",
-        "ec2:*",
-        "logs:*",
-        "cloudwatch:*",
-        "iam:*"
-      ],
-      "Resource": "*"
-    }
-  ]
-}
-```
-
-**Why This Approach:**
-- ✅ **Follows Least Privilege Principle** - Only includes necessary permissions
-- ✅ **No Permission Bloat** - Doesn't exceed AWS Free Tier limits
-- ✅ **Easier to Audit** - Specific to your infrastructure needs
-- ✅ **Better Cost Control** - Prevents accidental over-provisioning
-- ✅ **Enterprise Security** - Recommended for production systems
-
-### ❌ AWS Managed Policies (Not Recommended)
-Full-access policies like:
-- AmazonS3FullAccess
-- AWSLambda_FullAccess
-- AmazonDynamoDBFullAccess
-- CloudFrontFullAccess
-- etc.
-
-**Issues:**
-- ❌ Overly permissive (includes unused services)
-- ❌ Can exceed Free Tier limits
-- ❌ Security risk (grant more access than needed)
-- ❌ Harder to audit
-
-For detailed breakdown of permissions in `DeployerAccessPolicy`, see [docs/IAM_POLICY_REFERENCE.md](IAM_POLICY_REFERENCE.md).
-
----
-
-### 1. Restrict by Repository
-The trust policy limits OIDC to your specific repo:
-```
-repo:YOUR_USERNAME/aws-infra-automation:*
-```
-
-### 2. Limit to Main Branch (Optional)
-To only allow deployments from main:
-
-```json
-"token.actions.githubusercontent.com:sub": "repo:YOUR_USERNAME/aws-infra-automation:ref:refs/heads/main"
-```
-
-### 3. Use Environment Protection
-In **Settings → Environments → production**:
-- ✅ Enable "Required reviewers"
-- ✅ Add yourself as reviewer
-
-This ensures someone approves deployments!
-
-### 4. Regular Audit
-Check role permissions monthly:
-```bash
-aws iam list-role-policies --role-name DeployerAccess-Github
-aws iam get-role-policy --role-name DeployerAccess-Github --policy-name DeployerAccessPolicy
-```
-
----
-
-## 📚 Related Documentation
-
-- [GitHub Actions OIDC](https://docs.github.com/en/actions/deployment/security-hardening-your-deployments/about-security-hardening-with-openid-connect)
-- [AWS STS AssumeRoleWithWebIdentity](https://docs.github.com/en/actions/deployment/security-hardening-your-deployments/configuring-openid-connect-in-amazon-web-services)
-- [OIDC + GitHub Actions](https://docs.github.com/en/actions/deployment/security-hardening-your-deployments/configuring-openid-connect-in-cloud-providers)
-
----
-
-## ✅ Verification Checklist
+## Verification Checklist
 
 - [ ] OIDC provider created in AWS IAM
-- [ ] `DeployerAccess-Github` role created
-- [ ] `DeployerAccessPolicy` inline policy attached with correct permissions
-- [ ] `AWS_ACCOUNT_ID` updated in workflows (if different from 587402071946)
-- [ ] AWS secrets deleted from GitHub
-- [ ] Test PR created and passed
-- [ ] Workflows show "Retrieving assume role credentials"
-- [ ] Run `./scripts/test-oidc.sh` to verify setup
+- [ ] `DeployerAccess-Github` role created with trust policy
+- [ ] `DeployerAccessPolicy` inline policy attached ([reference](IAM_POLICY_REFERENCE.md))
+- [ ] `AWS_ACCOUNT_ID` correct in workflows
+- [ ] Old AWS secrets deleted from GitHub
+- [ ] Workflow shows "Retrieving assume role credentials"
+- [ ] `./scripts/test-oidc.sh` passes
 
 ---
 
-## 🚀 Summary
+## Resources
 
-OIDC setup is complete! Your workflows now:
-- ✅ Use temporary AWS credentials (1 hour validity)
-- ✅ No secrets stored in GitHub
-- ✅ Enterprise-grade security (industry best practice)
-- ✅ Automatically rotate credentials
-- ✅ Least-privilege custom policy (no permission bloat)
-- ✅ No AWS Free Tier limit issues
-
-Ready to deploy! 🎉
+- [GitHub OIDC Docs](https://docs.github.com/en/actions/deployment/security-hardening-your-deployments/about-security-hardening-with-openid-connect)
+- [AWS OIDC Configuration](https://docs.github.com/en/actions/deployment/security-hardening-your-deployments/configuring-openid-connect-in-amazon-web-services)
